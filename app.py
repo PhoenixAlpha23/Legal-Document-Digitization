@@ -15,7 +15,7 @@ import pandas as pd
 import fitz
 
 from utils.config import Config  # Make sure these paths are correct
-from utils.pdf_processing import process_pdf
+from utils.pdf_processing import process_pdf  # Import the UPDATED process_pdf
 from utils.image_processing import preprocess_image
 from models.yolo_detector import YOLODetector
 
@@ -139,93 +139,30 @@ def main():
     if uploaded_file is not None:
         try:
             if uploaded_file.type == "application/pdf":
-                doc = fitz.open(uploaded_file)
-                for page_num in range(doc.page_count):
-                    page = doc[page_num]
-                    pix = page.get_pixmap()
-                    image = Image.open(io.BytesIO(pix.tobytes())).convert("RGB")
-                    image = np.array(image)
-                    st.image(image, caption=f"PDF Page {page_num+1}")
+                options = {  # Define your image preprocessing options here!
+                    "resize": (800, 1000),  # Example: Resize the image (adjust as needed)
+                    "grayscale": False,      # Example: Convert to grayscale (adjust as needed)
+                    # ... add other preprocessing options as needed
+                }
 
-                    detections = detector.detect(image)
-                    image_with_boxes, text_images, table_images, stamp_images, signature_images = process_image(image, detections, ocr_processor, page_num)
-                    st.image(image_with_boxes, caption=f"Image with Detections and Labels (Page {page_num+1})")
+                extracted_text_per_page = process_pdf(uploaded_file, options)
 
-                    st.subheader(f"Extracted Entities (Page {page_num+1})")
-                    entity_counter = 1
+                if extracted_text_per_page:
+                    for page_num, text in enumerate(extracted_text_per_page):
+                        st.subheader(f"Page {page_num + 1} Extracted Text:")
+                        st.write(text)  # Or use st.text_area(text, height=200)
 
-                    st.write(f"## Confidence Scores (Page {page_num + 1}):")
-                    with st.container():
-                        confidence_dict = {}
-                        for detection in detections:
-                            if 'class' in detection:
-                                confidence_dict[detection['class']] = detection['confidence']
+                        doc = fitz.open(uploaded_file)
+                        page = doc[page_num]
+                        pix = page.get_pixmap()
+                        image = Image.open(io.BytesIO(pix.tobytes())).convert("RGB")
+                        st.image(image, caption=f"PDF Page {page_num + 1}")
+                        doc.close()
 
-                        st.write(f"1) Text: {confidence_dict.get('text', 'null')}")
-                        st.write(f"2) Table: {confidence_dict.get('table', 'null')}")
-                        st.write(f"3) Stamp: {confidence_dict.get('stamp', 'null')}")
-                        st.write(f"4) Signature: {confidence_dict.get('signature', 'null')}")
+                else:
+                    st.write("No text extracted from the PDF.")
 
-                    if text_images:
-                        st.write("Text:")
-                        for img in text_images:
-                            st.write(f"{entity_counter})")
-                            st.image(img)
-                            entity_counter += 1
-                    else:
-                        st.write(f"{entity_counter}) Text: Not Detected")
-                        entity_counter += 1
-
-                    if table_images:
-                        st.write("Tables:")
-                        for img in table_images:
-                            st.write(f"{entity_counter})")
-                            st.image(img)
-                            entity_counter += 1
-                    else:
-                        st.write(f"{entity_counter}) Tables: Not Detected")
-                        entity_counter += 1
-
-                    if stamp_images:
-                        st.write("Stamps:")
-                        for img in stamp_images:
-                            st.write(f"{entity_counter})")
-                            st.image(img)
-                            entity_counter += 1
-                    else:
-                        st.write(f"{entity_counter}) Stamps: Not Detected")
-                        entity_counter += 1
-
-                    if signature_images:
-                        st.write("Signatures:")
-                        for img in signature_images:
-                            st.write(f"{entity_counter})")
-                            st.image(img)
-                            entity_counter += 1
-                    else:
-                        st.write(f"{entity_counter}) Signatures: Not Detected")
-                        entity_counter += 1
-
-                    st.write("## Extracted Text:")
-
-                    if text_images:
-                        for detection in detections:
-                            if 'class' in detection and detection['class'] == 'text':
-                                ocr_results = ocr_processor.process_detections(image, [detection])
-                                for result in ocr_results:
-                                    st.write(f"Text: {result['text']}")
-                    else:
-                        st.write("No Text Detected")
-
-                    # Clear lists for the next page
-                    text_images = []
-                    table_images = []
-                    stamp_images = []
-                    signature_images = []
-
-                doc.close()
-
-            else:  # It's an image
+            else:  # It's an image (this part remains largely the same)
                 image = Image.open(uploaded_file).convert("RGB")
                 image = np.array(image)
                 st.image(image, caption="Uploaded Image")
@@ -303,7 +240,6 @@ def main():
         except Exception as e:
             st.error(f"An error occurred: {e}")
             logger.exception(f"An error occurred: {e}")
-
 
 if __name__ == "__main__":
     main()
