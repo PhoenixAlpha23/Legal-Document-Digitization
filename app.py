@@ -16,9 +16,11 @@ from services.detection_service import load_detector, load_ocr_processor
 from services.document_processing import process_image, process_pdf_page
 from models.LLMchain import process_legal_text
 
+# Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", stream=sys.stdout)
 logger = logging.getLogger(__name__)
 
+# Configure the Streamlit page
 st.set_page_config(
     page_title="Legal Document Digitization with YOLO OCR",
     page_icon=":page_facing_up:",
@@ -39,28 +41,35 @@ def main():
     
     st.title("Legal Document Digitizer")
     st.write("By Aryan Tandon and Umesh Tiwari")
+
+    # Sidebar for options
     st.sidebar.title("Document Processing Options")
 
+    # Language Settings
     st.sidebar.subheader("Language Settings")
     available_languages = get_supported_languages()
     default_lang = "English"
 
+    # Primary language selection
     primary_lang = st.sidebar.selectbox(
         "Primary Language",
         options=list(available_languages.keys()),
         index=list(available_languages.keys()).index(default_lang),
         help="Select the main language of your document",
     )
-    
+
+    # Additional languages selection
     additional_langs = st.sidebar.multiselect(
         "Additional Languages (Optional)",
         options=[lang for lang in available_languages.keys() if lang != primary_lang],
         help="Select additional languages if your document contains multiple languages",
     )
 
+    # Combine selected languages for Tesseract
     selected_langs = [primary_lang] + additional_langs
     lang_codes = "+".join([available_languages[lang] for lang in selected_langs])
 
+    # PSM Selection
     psm = st.sidebar.selectbox(
         "Text Layout Detection",
         options=[3, 4, 6, 11, 12],
@@ -74,9 +83,11 @@ def main():
         }[x],
         help="Choose how the system should read your document's layout",
     )
-    
+
+    # Update OCR processor with selected language and PSM
     ocr_processor.update_config(lang_codes, psm)
-#Preprocessing 
+
+    # Preprocessing options with better labels
     st.sidebar.subheader("Image Enhancement Options")
     apply_threshold = st.sidebar.checkbox(
         "Sharpen Text", value=True, help="Improves text clarity by increasing contrast"
@@ -108,7 +119,7 @@ def main():
         try:
             if uploaded_file.type == "application/pdf":
                 process_pdf_document(uploaded_file, detector, ocr_processor, preprocessing_options)
-            else: 
+            else:  # It's an image
                 process_image_document(uploaded_file, detector, ocr_processor, preprocessing_options)
                 
         except Exception as e:
@@ -116,61 +127,57 @@ def main():
             logger.exception(f"An error occurred: {e}")
             
 def process_pdf_document(uploaded_file, detector, ocr_processor, preprocessing_options):
-    """Handle PDF document processing and UI display"""
-    # Progress bar
-    progress_bar = st.progress(0)
-
+    """Handle PDF document processing and UI display for first page only"""
     try:
+        # Use the improved PDF processing
         doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
-        total_pages = doc.page_count
+        
+        # Process only the first page
+        page = doc[0]
+        image_np, error = process_pdf_page(page, dpi=300)
 
-        for page_num in range(total_pages):
-            progress_bar.progress((page_num + 1) / total_pages)
+        if error:
+            st.error(f"Error processing PDF page: {error}")
+            return
 
-            # Process one page at a time
-            page = doc[page_num]
-            image_np, error = process_pdf_page(page, dpi=300)
+        if image_np is None:
+            st.error("Could not extract page from PDF")
+            return
 
-            if error:
-                st.error(f"Error processing page {page_num + 1}: {error}")
-                continue
+        # Display the processed page
+        st.image(image_np, caption="PDF First Page", width=400)
 
-            if image_np is None:
-                continue
+        # Detect objects in the page
+        detections = detector.detect(image_np)
+        image_with_boxes, text_images, table_images, stamp_images, signature_images = process_image(
+            image_np,
+            detections,
+            ocr_processor,
+            0,  # First page
+            preprocessing_options,
+        )
 
-            # Display the processed page
-            st.image(image_np, caption=f"PDF Page {page_num+1}", width=400)
+        # Display the image with boxes
+        st.image(image_with_boxes, caption="Image with Detections and Labels", width=400)
 
-            # Detect objects in the page
-            detections = detector.detect(image_np)
-            image_with_boxes, text_images, table_images, stamp_images, signature_images = process_image(
-                image_np,
-                detections,
-                ocr_processor,
-                page_num,
-                preprocessing_options,
-            )
+        # Display simplified results
+        display_simplified_results(
+            detections, 
+            text_images, 
+            table_images, 
+            stamp_images, 
+            signature_images, 
+            image_np, 
+            ocr_processor, 
+            preprocessing_options
+        )
 
-            display_processing_results(
-                image_with_boxes, 
-                detections, 
-                text_images, 
-                table_images, 
-                stamp_images, 
-                signature_images, 
-                page_num + 1, 
-                image_np, 
-                ocr_processor, 
-                preprocessing_options
-            )
+        # Close the document
+        doc.close()
 
     except Exception as e:
         st.error(f"Error processing PDF: {e}")
         logger.exception(f"Error processing PDF: {e}")
-
-    finally:
-        # Clear the progress bar
-        progress_bar.empty()
 
 def process_image_document(uploaded_file, detector, ocr_processor, preprocessing_options):
     """Handle image document processing and UI display"""
@@ -187,91 +194,65 @@ def process_image_document(uploaded_file, detector, ocr_processor, preprocessing
         image_with_boxes, caption="Image with Detections and Labels", width=400
     )
 
-    display_processing_results(
-        image_with_boxes, 
+    display_simplified_results(
         detections, 
         text_images, 
         table_images, 
         stamp_images, 
         signature_images, 
-        None,  # No page number for single images
         image, 
         ocr_processor, 
         preprocessing_options
     )
 
-def display_processing_results(image_with_boxes, detections, text_images, table_images, 
-                             stamp_images, signature_images, page_num, 
+def display_simplified_results(detections, text_images, table_images, 
+                             stamp_images, signature_images, 
                              original_image, ocr_processor, preprocessing_options):
-    """Display processing results in the Streamlit UI"""
+    """Display simplified processing results in the Streamlit UI"""
     
-    page_info = f" (Page {page_num})" if page_num else ""
-    
-    st.subheader(f"Extracted Entities{page_info}")
-    entity_counter = 1
-
-    st.write(f"## Confidence Scores{page_info}:")
+    # Display confidence scores
+    st.subheader("Confidence Scores:")
     with st.container():
         confidence_dict = {}
         for detection in detections:
             if "class" in detection:
                 confidence_dict[detection["class"]] = detection["confidence"]
 
-        st.write(f"1) Text: {confidence_dict.get('text', 'null')}")
-        st.write(f"2) Table: {confidence_dict.get('table', 'null')}")
-        st.write(f"3) Stamp: {confidence_dict.get('stamp', 'null')}")
-        st.write(f"4) Signature: {confidence_dict.get('signature', 'null')}")
+        cols = st.columns(4)
+        with cols[0]:
+            st.write(f"Text: {confidence_dict.get('text', 'null')}")
+        with cols[1]:
+            st.write(f"Table: {confidence_dict.get('table', 'null')}")
+        with cols[2]:
+            st.write(f"Stamp: {confidence_dict.get('stamp', 'null')}")
+        with cols[3]:
+            st.write(f"Signature: {confidence_dict.get('signature', 'null')}")
 
-    if text_images:
-        st.write("Text:")
-        for img in text_images:
-            st.write(f"{entity_counter})")
-            st.image(img, width=400)
-            entity_counter += 1
-    else:
-        st.write(f"{entity_counter}) Text: Not Detected")
-        entity_counter += 1
-
-    if table_images:
-        st.write("Tables:")
-        for img in table_images:
-            st.write(f"{entity_counter})")
-            st.image(img, width=400)
-            entity_counter += 1
-    else:
-        st.write(f"{entity_counter}) Tables: Not Detected")
-        entity_counter += 1
-
-    if stamp_images:
-        st.write("Stamps:")
-        for img in stamp_images:
-            st.write(f"{entity_counter})")
-            st.image(img, width=400)
-            entity_counter += 1
-    else:
-        st.write(f"{entity_counter}) Stamps: Not Detected")
-        entity_counter += 1
-
-    if signature_images:
-        st.write("Signatures:")
-        for img in signature_images:
-            st.write(f"{entity_counter})")
-            st.image(img, width=400)
-            entity_counter += 1
-    else:
-        st.write(f"{entity_counter}) Signatures: Not Detected")
-        entity_counter += 1
-
+    # Display detected entities summary
+    st.subheader("Entities Detected:")
+    
+    entity_summary = {
+        "Text": len(text_images) > 0,
+        "Tables": len(table_images) > 0,
+        "Stamps": len(stamp_images) > 0,
+        "Signatures": len(signature_images) > 0
+    }
+    
+    cols = st.columns(4)
+    for i, (entity_type, detected) in enumerate(entity_summary.items()):
+        with cols[i]:
+            status = "✅ Detected" if detected else "❌ Not Found"
+            st.write(f"{entity_type}: {status}")
+    
+    # Process text for LLM analysis without showing OCR results
     try:
-        # Extracted Text and LLM Analysis
-        st.write("## Extracted Text:")
-        combined_text = ""
+        # Only perform LLM analysis if text is detected
         if text_images:
+            combined_text = ""
             for detection in detections:
                 if "class" in detection and detection["class"] == "text":
                     ocr_results = ocr_processor.process_detections(original_image, [detection], preprocessing_options)
                     for result in ocr_results:
-                        st.write(f"Text: {result['text']}")
                         combined_text += result['text'] + "\n"
             
             if combined_text.strip():
@@ -282,11 +263,13 @@ def display_processing_results(image_with_boxes, detections, text_images, table_
                         st.json(llm_results)
                     else:
                         st.error(llm_results["error"])
+            else:
+                st.info("No text content available for LLM analysis")
         else:
-            st.write("No Text Detected")
+            st.info("No text detected for LLM analysis")
     except Exception as e:
-        st.error(f"An error occurred during text extraction or analysis: {e}")
-        logger.exception(f"An error occurred during text extraction or analysis: {e}")
+        st.error(f"An error occurred during LLM analysis: {e}")
+        logger.exception(f"An error occurred during LLM analysis: {e}")
 
 if __name__ == "__main__":
     main()
