@@ -50,7 +50,7 @@ Respond in this exact JSON format:
 
 class GroqLLM(LLM, BaseModel):
     api_key: str = GROQ_API_KEY
-    model_name: str = "mixtral-8x7b-32768"
+    model_name: str = "gemma2-9b-it"
     temperature: float = 0.0
     max_tokens: int = 1024
 
