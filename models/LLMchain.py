@@ -8,6 +8,7 @@ from langchain.schema.runnable import RunnablePassthrough
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import os
+import re
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
@@ -46,6 +47,8 @@ Respond in this exact JSON format:
     "document_type": "Detected document type (in same script as input)",
     "summary": "Brief summary of the document (in same script as input)"
 }}
+
+IMPORTANT: Ensure your response is only the JSON object above, with no additional text, preamble, or explanation.
 """
 
 class GroqLLM(LLM, BaseModel):
@@ -59,6 +62,9 @@ class GroqLLM(LLM, BaseModel):
         return "groq"
 
     def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
+        if not self.api_key:
+            return '{"error": "API key not found in environment variables"}'
+            
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -71,23 +77,23 @@ class GroqLLM(LLM, BaseModel):
             "max_tokens": self.max_tokens
         }
 
-        response = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            json=payload,
-            headers=headers
-        )
-
-        response_text = response.text
-        print("Raw API Response:", response_text)  # for Debugging
-
-        if response.status_code != 200:
-            return {"error": f"Groq API error: {response.status_code} - {response_text}"}
-
         try:
+            response = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                json=payload,
+                headers=headers
+            )
+
+            if response.status_code != 200:
+                return f'{{"error": "Groq API error: {response.status_code} - {response.text}"}}'
+
             response_json = response.json()
             return response_json["choices"][0]["message"]["content"]
-        except json.JSONDecodeError:
-            return {"error": "Invalid JSON response from Groq API"}
+            
+        except requests.exceptions.RequestException as e:
+            return f'{{"error": "API request failed: {str(e)}"}}'
+        except Exception as e:
+            return f'{{"error": "Unknown error: {str(e)}"}}'
 
     @property
     def _identifying_params(self) -> Dict[str, Any]:
@@ -97,6 +103,14 @@ class GroqLLM(LLM, BaseModel):
             "max_tokens": self.max_tokens
         }
 
+def extract_json_from_text(text):
+    """Extract JSON from text in case the LLM adds extra content"""
+    # Try to find JSON pattern within the text
+    json_match = re.search(r'(\{.*\})', text, re.DOTALL)
+    if json_match:
+        return json_match.group(1)
+    return text
+
 @st.cache_data(ttl=3600)  # Cache for 1 hour
 def process_legal_text(text: str) -> Dict:
     try:
@@ -105,14 +119,30 @@ def process_legal_text(text: str) -> Dict:
             text = text[:MAX_CHARS] + "..."
 
         if not GROQ_API_KEY:
-            raise ValueError("API key not found in environment variables")
+            return {"error": "API key not found in environment variables"}
 
         llm = GroqLLM()
         prompt = PromptTemplate(template=prompt_template, input_variables=["text"])
-        chain = prompt | llm | RunnablePassthrough()
-        response = chain.invoke({"text": text})
-
-        return json.loads(response)
+        chain = prompt | llm
+        
+        # Get raw response from LLM
+        raw_response = chain.invoke({"text": text})
+        
+        # Log the raw response for debugging
+        print(f"Raw LLM response: {raw_response}")
+        
+        # Clean up response to extract JSON
+        json_str = extract_json_from_text(raw_response)
+        
+        # Try to parse as JSON
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError as e:
+            # If can't parse the JSON, show  friendly error and the raw response
+            return {
+                "error": f"Could not parse LLM response as JSON: {str(e)}",
+                "raw_response": raw_response[:500] + ("..." if len(raw_response) > 500 else "")
+            }
 
     except Exception as e:
         return {"error": f"Processing failed: {str(e)}"}
