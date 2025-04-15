@@ -44,8 +44,8 @@ Respond in this exact JSON format:
             "type": "entity type (PERSON, ORG, DATE, LOC, OTHER)"
         }}
     ],
-    "document_type": "Detected document type (in same script as input)",
-    "summary": "Brief summary of the document (in same script as input)"
+    "document_type": "Detected document type (same script as input)",
+    "summary": "Brief summary of the document (same script as input)"
 }}
 
 IMPORTANT: Ensure your response is only the JSON object above, with no additional text, preamble, or explanation.
