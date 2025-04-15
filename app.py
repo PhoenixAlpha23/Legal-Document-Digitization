@@ -171,8 +171,6 @@ def process_pdf_document(uploaded_file, detector, ocr_processor, preprocessing_o
             ocr_processor, 
             preprocessing_options
         )
-
-        # Close the document
         doc.close()
 
     except Exception as e:
@@ -210,41 +208,36 @@ def display_simplified_results(detections, text_images, table_images,
                              original_image, ocr_processor, preprocessing_options):
     """Display simplified processing results in the Streamlit UI"""
     
-    # Display confidence scores
-    st.subheader("Confidence Scores:")
-    with st.container():
-        confidence_dict = {}
-        for detection in detections:
-            if "class" in detection:
-                confidence_dict[detection["class"]] = detection["confidence"]
-
-        cols = st.columns(4)
-        with cols[0]:
-            st.write(f"Text: {confidence_dict.get('text', 'null')}")
-        with cols[1]:
-            st.write(f"Table: {confidence_dict.get('table', 'null')}")
-        with cols[2]:
-            st.write(f"Stamp: {confidence_dict.get('stamp', 'null')}")
-        with cols[3]:
-            st.write(f"Signature: {confidence_dict.get('signature', 'null')}")
-
-    # Display detected entities summary
-    st.subheader("Entities Detected:")
-    
-    entity_summary = {
-        "Text": len(text_images) > 0,
-        "Tables": len(table_images) > 0,
-        "Stamps": len(stamp_images) > 0,
-        "Signatures": len(signature_images) > 0
+    # Gather confidence scores and detected status for each entity type
+    entity_data = {
+        "Text": {"detected": len(text_images) > 0, "confidence": None},
+        "Table": {"detected": len(table_images) > 0, "confidence": None},
+        "Stamp": {"detected": len(stamp_images) > 0, "confidence": None},
+        "Signature": {"detected": len(signature_images) > 0, "confidence": None}
     }
     
-    cols = st.columns(4)
-    for i, (entity_type, detected) in enumerate(entity_summary.items()):
-        with cols[i]:
-            status = "✅ Detected" if detected else "❌ Not Found"
-            st.write(f"{entity_type}: {status}")
+    # Update confidence scores from detections
+    for detection in detections:
+        if "class" in detection and detection["class"] in ["text", "table", "stamp", "signature"]:
+            class_name = detection["class"].capitalize()  # Convert to match our entity_data keys
+            entity_data[class_name]["confidence"] = detection["confidence"]
     
-    # Process text for LLM analysis without showing OCR results
+    # Display only detected entities with their confidence scores
+    st.subheader("Detected Entities:")
+    # Filter only detected entities
+    detected_entities = {k: v for k, v in entity_data.items() if v["detected"]}
+    
+    if detected_entities:
+        cols = st.columns(len(detected_entities) or 1)
+        # Display each detected entity with its confidence score
+        for i, (entity_type, data) in enumerate(detected_entities.items()):
+            with cols[i]:
+                confidence = data["confidence"]
+                confidence_display = f"{confidence:.4f}" if confidence is not None else "N/A"
+                st.write(f"{entity_type}: ✅ Detected (Confidence: {confidence_display})")
+    else:
+        st.info("No entities detected in the document")
+    
     try:
         # Only perform LLM analysis if text is detected
         if text_images:
